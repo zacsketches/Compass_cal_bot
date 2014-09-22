@@ -34,8 +34,6 @@ void log_data()
 
 void write_16bit(int16_t data)
 {
-  static uint16_t fram_address = 0x0000;
-
   uint8_t hi = (data >> 8);
   uint8_t lo = (data & 0x00FF);
   
@@ -56,7 +54,7 @@ void solve_calibration(const Address start, const Address end, Cal_data& solutio
     fill_reading(reading, current);    
     set.update(reading);  
     
-    for(int i = 0; i < sizeof(Reading); ++i) {
+    for(int i = 0; i < sizeof(reading); ++i) {
       ++current;
     }   
   }

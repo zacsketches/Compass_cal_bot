@@ -4,6 +4,21 @@
 
 typedef uint16_t Address;
 
+/*
+  TODO Improvements
+    a. overload fram.write8 so there is a version that 
+       doesn't take an argument with the following signature:
+         void write8(const uint8_t data);
+       internal to this function call pointer() to get the current
+       memory pointer and then increment the pointer after the write.
+    b. update all uses of frame.write in write16() to use this new overlaod 
+       which will keep the pointer on the next open memory block which will 
+       ensure that solve_calibration works properly.
+    c. Finally, consider changing DAZL_fram to have a read_ptr and a
+       write_ptr.  Then you could use the same methodology to read the next
+       element of the fram without keeping track of the address externally.
+*/
+
 class DAZL_fram : public Adafruit_FRAM_I2C {
   public:
     DAZL_fram(Address start_address = 0) 

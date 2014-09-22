@@ -70,7 +70,9 @@ Motor* mtr_rt = new Motor("rt", 2, 3);
 Magnetometer compass;
 
 /*---------Construct FRAM memory ----------------------------------*/
-DAZL_fram fram(start_address);
+DAZL_fram fram(start_address);  //start_address sets internal pointer
+                                //to the memory location where FRAM will
+                                //start writing new data
 
 /*---------Configure pot for input --------------------------------*/
 const int knob = 0;
