@@ -15,7 +15,7 @@
  *   Lt PWM on pin 5
  *   Lt dir on pin 4 
  * 
- * 10K pot wiper conncted on pin xx
+ * 10K pot wiper conncted on pin A0
  *
 */
 
@@ -65,7 +65,7 @@ Magnetometer compass;
 Adafruit_FRAM_I2C fram;
 
 /*---------Configure pot for input --------------------------------*/
-const int knob = 8;
+const int knob = 0;
 
 /*---------Global data --------------------------------------------*/
 boolean circle_complete = false;
@@ -78,6 +78,7 @@ void setup()
 {
   Serial.begin(57600);
   Wire.begin();
+  static unsigned long start_cal = millis();
   
   // start the FRAM memory
   /*
@@ -91,8 +92,8 @@ void setup()
   
   // start the compass  
   if (compass.begin() != 0) {
-    Serial.println("Error connecting to Magnetometer");
-    exit(1);
+    Serial.println("\nError connecting to Magnetometer");
+    while(true);
   }
   
   //attach motors to the Rover_plant
@@ -118,11 +119,14 @@ void setup()
   scale = map(scale, 0, 1023, 0, 155);
   
   // drive a circle by adjusting the control effort to the first track.
-  int rt_effort = 100;
+  int rt_effort = 150;
   rt_effort += scale;
-  
+  if(rt_effort > 255) rt_effort = 255;
+    
   //construct the plant message
-  Rover_plant_msg control(Direction::fwd, 50, Direction::fwd, rt_effort);
+  Rover_plant_msg control(Direction::fwd, 25, Direction::fwd, rt_effort);
+  Serial.print("Right effort: ");
+  Serial.println(rt_effort);
   p_fb.update(control);
   
   //get the current heading
@@ -142,7 +146,7 @@ void setup()
   }
   
   //drive in a circle and log data;
-  while(!circle_complete) {
+    while(!circle_complete) {
     plant.take_feedback();
     plant.drive();
     
@@ -165,15 +169,29 @@ void setup()
             break;
     }
     
-    if(heading > (start_heading - tolerance) && heading < (start_heading + tolerance) ) {
+    if(heading > (start_heading - tolerance) 
+       && heading < (start_heading + tolerance) 
+       && millis() > (start_cal + 2500) ) 
+    {
        circle_complete = true; 
     }
+    Serial.print("Start Heading: ");
+    Serial.print(start_heading);
+    Serial.print("\tCurrent Heading: ");
+    Serial.println(heading);
   }
 }
 
 void loop() 
 {
-  return;
+  //construct the plant message
+  Rover_plant_msg control(Direction::fwd, 0, Direction::fwd, 0);
+  p_fb.update(control);
+  
+  plant.take_feedback();
+  plant.drive();
+  
+
 }
 
 void log_data() 
