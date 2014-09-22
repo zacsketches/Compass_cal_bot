@@ -1,7 +1,10 @@
 /*
  * Drives the bot in a circle with a radius configurable by the
- * pot connected on A2.  Takes compass readings every 100ms and
- * stores the data on FRAM connected accessible via I2C.
+ * pot connected on A0.  Takes compass readings every 100ms and
+ * stores the data on FRAM connected accessible via I2C.  Then
+ * retrieves that data and solves the calibration equations for
+ * scale and offset.  Those values are stored in EEPROM for
+ * by other sketches.
  *
  * Requires the following connections
  * 
@@ -10,14 +13,16 @@
  * Adafruit MB85RC256V breakout on I2C
  *
  * Rover Motor Controller Conncted as follows:
- *   Rt PWM on pin 3
  *   Rt dir on pin 2
- *   Lt PWM on pin 5
+ *   Rt PWM on pin 3
  *   Lt dir on pin 4 
+ *   Lt PWM on pin 5
  * 
- * 10K pot wiper conncted on pin A0
+ * Pot wiper conncted on pin A0
  *
 */
+
+#include "Compass_cal.h"
 
 #include <Direction.h>
 #include <Feedback.h>
@@ -32,23 +37,26 @@
 #include <Rover_plant_msg.h>
 
 #include <Wire.h>
+#include <EEPROM.h>
 
 #include <Adafruit_FRAM_I2C.h>
 #include <HMC5883Llib.h>
 
-class Address_pointer {
-  public:
-    Address_pointer() { ptr = 0; }
-    void set_pointer(const uint16_t address) { ptr = address; }
-    uint16_t pointer() const {return ptr;}
-    void increment() { ++ptr; }
-  private:
-    uint16_t ptr;   
-};
+#define DEBUG_HEADING   0
+#define DEBUG_CAL       1
 
-Address_pointer fram_ptr;
+/*---------Global data --------------------------------------------*/
+const Address eeprom_start = 0x0000;  //starting address to store cal data in EEPROM
+const Address start_address = 0x0000; //starting FRAM Address for cal measurements
+boolean circle_complete = false;
+int starting_head = 0;
+const int tolerance = 5;      // +/- value that sets band around starting head
+                              // to know when the circle is complete
+const int interval = 100;     // ms delay between measurements in logged data
 
-const int compass_address = 0x1e;  //I2C 7 bit address for HMC5883
+
+/*---------Cal_data struct used to store calibration data---------*/
+Cal_data cal_data;
 
 /*---------Feedback Object Shared by Controller and Plant----------*/
 Rover_plant_fb<Rover_plant_msg> p_fb;
@@ -62,22 +70,17 @@ Motor* mtr_rt = new Motor("rt", 2, 3);
 Magnetometer compass;
 
 /*---------Construct FRAM memory ----------------------------------*/
-Adafruit_FRAM_I2C fram;
+DAZL_fram fram(start_address);
 
 /*---------Configure pot for input --------------------------------*/
 const int knob = 0;
-
-/*---------Global data --------------------------------------------*/
-boolean circle_complete = false;
-int starting_head = 0;
-const int tolerance = 5;      // +/- value that sets band around starting head
-                              // to know when the circle is complete
-const int interval = 100;     // ms delay between measurements in logged data
 
 void setup() 
 {
   Serial.begin(57600);
   Wire.begin();
+  delay(1500);   //wait a moment after power up before starting the cal circle
+  
   static unsigned long start_cal = millis();
   
   // start the FRAM memory
@@ -114,7 +117,7 @@ void setup()
   // 230      +- 8.1 Ga
   compass.setGain(HMC5833L_GAIN_1370);
   
-  // we want to get a scale value between 0 and 155 to add to the base effort of 100
+  // we want to get a scale value between 0 and 155 to add to the base effort
   int scale = analogRead(knob);
   scale = map(scale, 0, 1023, 0, 155);
   
@@ -131,22 +134,10 @@ void setup()
   
   //get the current heading
   double start_heading;
-  int8_t ret = compass.readHeadingDeg(&start_heading);
-  switch (ret)
-  {
-      case HMC5833L_ERROR_GAINOVERFLOW:
-          Serial.println("Gain Overflow");
-          return;
-      case 0:
-          // success
-          break;
-      default:
-          Serial.println("Failed to read Magnetometer");
-          return;
-  }
+  compass.readHeadingDeg(&start_heading);
   
   //drive in a circle and log data;
-    while(!circle_complete) {
+  while(!circle_complete) {
     plant.take_feedback();
     plant.drive();
     
@@ -154,90 +145,40 @@ void setup()
        
     // if the current head is in band with the starting head then
     // finish the circle.
-    double heading = 370.0;
-    int8_t ret = compass.readHeadingDeg(&heading);
-    switch (ret)
-    {
-        case HMC5833L_ERROR_GAINOVERFLOW:
-            Serial.println("Gain Overflow");
-            break;
-        case 0:
-            // success
-            break;
-        default:
-            Serial.println("Failed to read Magnetometer");
-            break;
-    }
-    
+    double heading;
+    compass.readHeadingDeg(&heading);    
     if(heading > (start_heading - tolerance) 
        && heading < (start_heading + tolerance) 
        && millis() > (start_cal + 2500) ) 
     {
        circle_complete = true; 
     }
-    Serial.print("Start Heading: ");
-    Serial.print(start_heading);
-    Serial.print("\tCurrent Heading: ");
-    Serial.println(heading);
+    #if DEBUG_HEADING == 1
+      Serial.print("Start Heading: ");
+      Serial.print(start_heading);
+      Serial.print("\tCurrent Heading: ");
+      Serial.println(heading);
+    #endif 
   }
+  
+  //solve the calibration equations with the data provided
+  solve_calibration(start_address, fram.pointer(), cal_data);
+  
+  //store calibration data to EEPROM
+  int n = EEPROM_write_anything(eeprom_start, cal_data);
+  #if DEBUG_CAL == 1
+    Serial.print("Bytes written to EEPROM: ");
+    Serial.println(n);
+    cal_data.print();
+  #endif
+  
 }
 
 void loop() 
 {
-  //construct the plant message
-  Rover_plant_msg control(Direction::fwd, 0, Direction::fwd, 0);
-  p_fb.update(control);
-  
-  plant.take_feedback();
-  plant.drive();
-  
-
+  while(true) {
+    delay(10);
+  }  
 }
 
-void log_data() 
-{
-  static unsigned long last_measurement = 0;
-  static unsigned long now; 
-  
-  now = millis();
-  
-  if (now > (last_measurement + interval)) {
-    //take a measurement
-    int16_t x, y, z;
-    int8_t ret = compass.readRaw(&x, &y, &z);
-    switch (ret)
-    {
-        case HMC5833L_ERROR_GAINOVERFLOW:
-            Serial.println("Gain Overflow");
-            return;
-        case 0:
-            // success
-            break;
-        default:
-            Serial.println("Failed to read raw data");
-            return;
-    }
-      
-    //log it to the FRAM
-    write_16bit(x);
-    write_16bit(y);
-    write_16bit(z);    
-    
-    //update time for last measurement
-    last_measurement = now;
-  }
-}
 
-void write_16bit(int16_t data)
-{
-  static uint16_t fram_address = 0x0000;
-
-  uint8_t hi = (data >> 8);
-  uint8_t lo = (data & 0x00FF);
-  
-  fram.write8(fram_ptr.pointer(), hi);
-  fram_ptr.increment();
-  fram.write8(fram_ptr.pointer(), lo);
-  fram_ptr.increment();
-}
-  
